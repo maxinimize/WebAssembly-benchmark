@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+textarea {
+  width: 640px;
+}
+</style>
+<script src="dft.js"></script>
+<script id="js_code">
+function jsDft(signals, res, N) {
+  for (let k = 0; k < N; k++) {
+    let re = 0
+    let im = 0
+    for (let n = 0; n < N; n++) {
+      const theta = (2 * Math.PI * k * n) / N
+      const c = Math.cos(theta)
+      const s = -Math.sin(theta)
+      const xn = signals[n]
+      re += xn.re * c - xn.im * s
+      im += xn.re * s + xn.im * c
+    }
+    res[k].re = re
+    res[k].im = im
+  }
+  //console.info(res)
+}
+</script>
+<script id="ws_instantiate_code">
+var module, functions = {};
+
+Module().then((instance) => {
+  functions.dft = instance.cwrap('dft', null, ['number', 'number', 'number', 'number']);
+  module = instance
+  onReady();
+});
+// fetch('dft.wasm')
+//   .then(response => response.arrayBuffer())
+//   .then(buffer => new Uint8Array(buffer))
+//   .then(binary => {
+//     var moduleArgs = {
+//       wasmBinary: binary,
+//     };
+//     Module(moduleArgs).then(_module => {
+//       functions.dft = _module.cwrap('dft', null, ['number', 'number', 'number', 'number']);
+//       module = _module
+//       onReady();
+//     });
+//   });
+</script>
+<script id="test_code">
+function start() {
+  document.getElementById('run_button').disabled = true;
+
+  var elemNum = document.getElementById('length').value;
+  var loop = document.getElementById('loop').value;
+
+  function Signal(re, im) {
+    this.re = re;
+    this.im = im;
+  }
+
+  var signals = [];
+  var res1 = [];
+  var res2 = [];
+
+  var jsPerformance = document.getElementById('js_performance');
+  var wsPerformance = document.getElementById('ws_performance');
+  var comparison = document.getElementById('comparison');
+
+  jsPerformance.innerText = '';
+  wsPerformance.innerText = '';
+  comparison.innerText = '';
+
+  initSignals(signals, elemNum);
+  initRes(res1, elemNum);
+  initRes(res2, elemNum);
+
+  function initSignals(array, n) {
+    for (var i = 0; i < n; i++) {
+      const re = Math.random() * 2 - 1; // 生成-1到1之间的随机实数
+      const im = Math.random() * 2 - 1; // 生成-1到1之间的随机虚数
+      array[i] = new Signal(re, im);
+    }
+  }
+
+  function initRes(array, n) {
+    for (var i = 0; i < n; i++) {
+      array[i] = new Signal(0.0, 0.0);
+    }
+  }
+
+  function setSignalsToFloat64Array(signals, array, offset) {
+    for (var i = 0; i < signals.length; i++) {
+      var index = offset + i*2;
+      array[index+0] = signals[i].re;
+      array[index+1] = signals[i].im;
+    }
+  }
+
+  function setFloat64ArrayToSignals(array, signals, offset) {
+    for (var i = 0; i < array.length; i = i + 2) {
+      var index = i / 2;
+      signals[index].re = array[i];
+      signals[index].im = array[i + 1];
+    }
+  }
+
+  function equalArray(array1, array2) {
+    if (array1.length !== array2.length) {
+      console.log('array length mismatch')
+      return false
+    }
+    for (var i = 0; i < array1.length; i++) {
+      let f = 6
+      if (array1[i].re.toFixed(f) !== array2[i].re.toFixed(f) || array1[i].im.toFixed(f) !== array2[i].im.toFixed(f)) {
+        console.log(`arrays differ at index ${i}: ${array1[i].re.toFixed(f)} + ${array1[i].im.toFixed(f)}i vs. ${array2[i].re.toFixed(f)} + ${array2[i].im.toFixed(f)}i` );
+        return false
+      }
+    }
+    return true
+  }
+
+  function checkFunctionality() {
+    initRes(res1, elemNum);
+    initRes(res2, elemNum);
+    jsDft(signals, res1, elemNum);
+    wsDft(signals, res2, elemNum);
+    return equalArray(res1, res2);
+  }
+
+  function run(func, signals, res, n, loop) {
+    const isWarmUp = document.getElementById('iswarmup').checked;
+    if (isWarmUp) {
+      func(signals, res, n);  // warm-up
+    }
+    var elapsedTime = 0.0;
+    for (var i = 0; i < loop; i++) {
+      var startTime = performance.now();
+      func(signals, res, n);
+      var endTime = performance.now();
+      elapsedTime += (endTime - startTime);
+    }
+    return (elapsedTime / loop).toFixed(4);
+  }
+
+  function wsDft(signals, res, n) {
+    var pointer1 = module._malloc(signals.length * 2 * 8);
+    var pointer2 = module._malloc(res.length * 2 * 8);
+    var offset1 = pointer1 / 8;
+    var offset2 = pointer2 / 8;
+    setSignalsToFloat64Array(signals, module.HEAPF64, offset1);
+    functions.dft(pointer1, pointer2, n);
+    // var temp = new Float64Array(n * 2);
+    // temp.set(module.HEAPF64.subarray(offset2, offset2 + res.length * 2));
+    setFloat64ArrayToSignals(module.HEAPF64.subarray(offset2, offset2 + res.length * 2), res, offset2);
+    //console.info(res)
+    module._free(pointer1);
+    module._free(pointer2);
+  }
+
+  // don't use Promise for the non Promise support browsers so far.
+  setTimeout(function () {
+    if (!checkFunctionality()) {
+      document.getElementById('message').innerText =
+       'Two functions seem not equeal';
+      document.getElementById('run_button').disabled = false;
+      return;
+    }
+    setTimeout(function () {
+      jsPerformance.innerText = run(jsDft, signals, res1, elemNum, loop);
+      setTimeout(function () {
+        wsPerformance.innerText = run(wsDft, signals, res2, elemNum, loop);
+        comparison.innerText = (Number(jsPerformance.innerText) / Number(wsPerformance.innerText)).toFixed(4);
+        document.getElementById('message').innerText = 'Done';
+        document.getElementById('run_button').disabled = false;
+      });
+      document.getElementById('message').innerText = 'Running WebAssembly';
+    });
+    document.getElementById('message').innerText = 'Running JavaScript';
+  });
+
+  document.getElementById('message').innerText = 'Checking equality';
+}
+</script>
+<script>
+function onReady() {
+  document.getElementById('run_button').disabled = false;
+  document.getElementById('message').innerText = 'Ready';
+}
+
+function init() {
+  putCode('test_code_area', document.getElementById('test_code').text.trim());
+  putCode('js_code_area', document.getElementById('js_code').text.trim());
+
+  loadTextFile('dft.c', function(text) {
+    putCode('ws_code_area', text.trim());
+  });
+
+  loadTextFile('dft.sh', function(text) {
+    putCode('sh_code_area', text.trim());
+  });
+
+  putCode('ws_instantiate_code_area',
+          document.getElementById('ws_instantiate_code').text.trim());
+}
+
+function loadTextFile(url, callback) {
+  var request = new XMLHttpRequest();
+  request.open('GET', url);
+  request.responseType = 'text';
+  request.onload = function (event) {
+    callback(request.response);
+  };
+  request.send();
+}
+
+function putCode(textareaId, code) {
+  var textarea = document.getElementById(textareaId);
+  textarea.value = code;
+  textarea.setAttribute('rows', code.split('\n').length);
+}
+
+function switchDisplay(div) {
+  var textareas = div.getElementsByTagName('textarea');
+  var element = textareas[0];
+  var p = div.getElementsByTagName('p')[0];
+  p.textContent = p.textContent.slice(2);
+  if (element.style.display === 'none') {
+    element.style.display = '';
+    p.textContent = '- ' + p.textContent;
+  } else {
+    element.style.display = 'none';
+    p.textContent = '+ ' + p.textContent;
+  }
+}
+</script>
+</head>
+<body onload="init()">
+  <div>
+    <label for="length">length: </label>
+    <input type="number" name="length" id="length" value="256">
+    <label for="length">loop: </label>
+    <input type="number" name="loop" id="loop" value="10">
+    <label for="iswarmup">warm-up: </label>
+    <input type="checkbox" id="iswarmup" name="iswarmup" checked />
+    <p>
+      <button id="run_button" onclick="start()" disabled>run</button>
+      <span id="message">Loading WebAssembly</span>
+    </p>
+    <p>
+      Result (average [ms])<br />
+      JavaScript: <span id="js_performance"></span><br />
+      WebAssembly: <span id="ws_performance"></span><br />
+      JavaScript/WebAssembly: <span id="comparison"></span><br />
+    </p>
+  </div>
+  <div>
+    <p onclick="switchDisplay(this.parentNode)">+ Test code</p>
+    <p><textarea id="test_code_area" readonly style="display:none"></textarea></p>
+  </div>
+  <div>
+    <p onclick="switchDisplay(this.parentNode)">- JavaScript code</p>
+    <p><textarea id="js_code_area" readonly></textarea></p>
+  </div>
+  <div>
+    <p onclick="switchDisplay(this.parentNode)">- WebAssembly C code</p>
+    <p><textarea id="ws_code_area" readonly></textarea></p>
+  </div>
+  <div>
+    <p onclick="switchDisplay(this.parentNode)">+ WebAssembly Compile shell script</p>
+    <p><textarea id="sh_code_area" readonly style="display:none"></textarea></p>
+  </div>
+  <div>
+    <p onclick="switchDisplay(this.parentNode)">+ WebAssembly Instantiation code</p>
+    <p><textarea id="ws_instantiate_code_area" readonly style="display:none"></textarea></p>
+  </div>
+</body>
+</html>
