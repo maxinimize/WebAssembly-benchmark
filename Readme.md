@@ -2,9 +2,11 @@
 
 Easy JavaScript vs WebAssembly performance comparison test-set.
 
+Added a dft test into original code.
+
 ## Demo
 
-[Online Demo](https://takahirox.github.io/WebAssembly-benchmark)
+[Online Demo](https://maxinimize.github.io/WebAssembly-benchmark/)
 
 ## Develop locally
 
