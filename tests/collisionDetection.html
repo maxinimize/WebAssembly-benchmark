@@ -55,7 +55,11 @@ fetch('collisionDetection.wasm')
         onReady();
       }
     };
-    module = Module(moduleArgs);
+    Module(moduleArgs).then(_module => {
+      functions.collisionDetection = _module.cwrap('collisionDetection', null, ['number', 'number', 'number', 'number']);
+      module = _module
+      onReady();
+    });
   });
 </script>
 <script id="test_code">
